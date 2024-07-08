@@ -10,8 +10,8 @@ with Futures but any element type.
 ## Usage
 
 ```rust
-use futures::stream;
 use buffer::StreamBufferExt;
+use futures::stream;
 use futures::StreamExt;
 
 async fn slow_cpu_heavy_operation(x: i32) -> i32 {
