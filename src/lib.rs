@@ -5,12 +5,12 @@ extern crate doc_comment;
 #[cfg(test)]
 doctest!("../README.md");
 
+use futures::stream::{Stream, StreamExt};
 use futures::task::{Context, Poll};
-use futures::Stream;
-use futures::StreamExt;
 use pin_project_lite::pin_project;
 use std::pin::Pin;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 pin_project! {
     pub struct BufferedStream<S>
@@ -18,7 +18,13 @@ pin_project! {
         S: Stream,
     {
         #[pin]
+        stream: Option<Pin<Box<S>>>,
+        #[pin]
         receiver: mpsc::Receiver<S::Item>,
+        buffer_size: usize,
+        sender: Option<mpsc::Sender<S::Item>>,
+        #[pin]
+        producer_task: Option<JoinHandle<()>>,
     }
 }
 
@@ -29,17 +35,14 @@ where
 {
     fn new(stream: S, buffer_size: usize) -> Self {
         let (sender, receiver) = mpsc::channel(buffer_size);
-        let mut stream = Box::pin(stream);
 
-        tokio::spawn(async move {
-            while let Some(item) = stream.as_mut().next().await {
-                if sender.send(item).await.is_err() {
-                    break; // Receiver dropped
-                }
-            }
-        });
-
-        BufferedStream { receiver }
+        BufferedStream {
+            stream: Some(Box::pin(stream)),
+            receiver,
+            buffer_size,
+            sender: Some(sender),
+            producer_task: None,
+        }
     }
 }
 
@@ -52,7 +55,21 @@ where
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
-        Pin::new(&mut *this.receiver).poll_recv(cx)
+
+        if this.producer_task.is_none() {
+            let stream = this.stream.take().unwrap();
+            let sender = this.sender.take().unwrap();
+            *this.producer_task = Some(tokio::spawn(async move {
+                let mut stream = stream;
+                while let Some(item) = stream.next().await {
+                    if sender.send(item).await.is_err() {
+                        break; // Receiver dropped
+                    }
+                }
+            }));
+        }
+
+        Pin::new(&mut this.receiver).poll_recv(cx)
     }
 }
 
@@ -66,7 +83,12 @@ pub trait StreamBufferExt: Stream {
     }
 }
 
-impl<T: ?Sized> StreamBufferExt for T where T: Stream {}
+impl<T: ?Sized> StreamBufferExt for T
+where
+    T: Stream + Send + 'static,
+    T::Item: Send + 'static,
+{
+}
 
 // Tests
 #[cfg(test)]
