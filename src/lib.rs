@@ -58,7 +58,11 @@ where
         if let Some(item) = this.buffer.pop_front() {
             Poll::Ready(Some(item))
         } else {
-            Poll::Pending
+            match this.stream.as_mut().poll_next(cx) {
+                Poll::Ready(Some(item)) => Poll::Ready(Some(item)),
+                Poll::Ready(None) => Poll::Ready(None),
+                Poll::Pending => Poll::Pending,
+            }
         }
     }
 }

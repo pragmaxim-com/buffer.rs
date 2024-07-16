@@ -3,9 +3,8 @@
 ![Build status](https://github.com/pragmaxim-com/buffer.rs/workflows/Rust/badge.svg)
 [![Documentation](https://docs.rs/buffer/badge.svg)](https://docs.rs/buffer)
 
-A stream adapter that buffers elements using `tokio::sync::mpsc` to improve performance
-when downstream is busy (ie. db compactions). In comparison to `buffered` it works not only
-with Futures but any element type.
+A stream adapter that buffers elements to improve performance when downstream tends to be busy (eg. db compactions). 
+In comparison to `buffered` it works not only with Futures but any element type as there is no async.
 
 ## Usage
 
