@@ -7,9 +7,10 @@ doctest!("../README.md");
 
 use futures::task::{Context, Poll};
 use futures::Stream;
+use futures::StreamExt;
 use pin_project_lite::pin_project;
-use std::collections::VecDeque;
 use std::pin::Pin;
+use tokio::sync::mpsc;
 
 pin_project! {
     pub struct BufferedStream<S>
@@ -17,60 +18,49 @@ pin_project! {
         S: Stream,
     {
         #[pin]
-        stream: S,
-        buffer: VecDeque<S::Item>,
-        buffer_size: usize,
+        receiver: mpsc::Receiver<S::Item>,
     }
 }
 
 impl<S> BufferedStream<S>
 where
-    S: Stream,
+    S: Stream + Send + 'static,
+    S::Item: Send + 'static,
 {
     fn new(stream: S, buffer_size: usize) -> Self {
-        BufferedStream {
-            stream,
-            buffer: VecDeque::with_capacity(buffer_size),
-            buffer_size,
-        }
+        let (sender, receiver) = mpsc::channel(buffer_size);
+        let mut stream = Box::pin(stream);
+
+        tokio::spawn(async move {
+            while let Some(item) = stream.as_mut().next().await {
+                if sender.send(item).await.is_err() {
+                    break; // Receiver dropped
+                }
+            }
+        });
+
+        BufferedStream { receiver }
     }
 }
 
 impl<S> Stream for BufferedStream<S>
 where
-    S: Stream,
+    S: Stream + Send + 'static,
+    S::Item: Send + 'static,
 {
     type Item = S::Item;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
-
-        // Try to fill the buffer if it's not full
-        while this.buffer.len() < *this.buffer_size {
-            match this.stream.as_mut().poll_next(cx) {
-                Poll::Ready(Some(item)) => this.buffer.push_back(item),
-                Poll::Ready(None) => break,
-                Poll::Pending => break,
-            }
-        }
-
-        // Return the next item from the buffer if available
-        if let Some(item) = this.buffer.pop_front() {
-            Poll::Ready(Some(item))
-        } else {
-            match this.stream.as_mut().poll_next(cx) {
-                Poll::Ready(Some(item)) => Poll::Ready(Some(item)),
-                Poll::Ready(None) => Poll::Ready(None),
-                Poll::Pending => Poll::Pending,
-            }
-        }
+        Pin::new(&mut *this.receiver).poll_recv(cx)
     }
 }
 
 pub trait StreamBufferExt: Stream {
     fn buffer(self, buffer_size: usize) -> BufferedStream<Self>
     where
-        Self: Sized,
+        Self: Sized + Send + 'static,
+        Self::Item: Send + 'static,
     {
         BufferedStream::new(self, buffer_size)
     }
