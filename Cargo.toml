@@ -19,7 +19,7 @@ pin-project-lite = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1.38", features = ["full", "test-util"] }
-criterion = { version = "0.5.1", features = ["html_reports", "async_tokio"] }
+criterion = { version = "0.8.1", features = ["html_reports", "async_tokio"] }
 
 [dev-dependencies.doc-comment]
 version = "0.3"
